@@ -27,6 +27,12 @@ class ObjectCounter:
         self.in_count = 0
         self.out_count = 0
         
+        # Frame Skipping
+        self.frame_count = 0
+        self.skip_frames = 2 # Skip N frames between inferences
+        self.last_boxes = []
+        self.last_track_ids = []
+        
         # Line Crossing Buffer (to avoid immediate re-triggering, though counted_ids handles one-time count)
         # We store history to determine direction
 
@@ -78,30 +84,36 @@ class ObjectCounter:
         """
         Process a single frame: track objects, count crossings, and annotate.
         """
+        self.frame_count += 1
         height, width = frame.shape[:2]
         
         # Initialize default region if not set
         if self.region is None:
-            # Default: Vertical line at 50% width
             cx = int(width * 0.5)
             self.region = [(cx, 0), (cx, height)]
             
         line_start = self.region[0]
         line_end = self.region[1]
 
-        # Run tracking
-        # persist=True is crucial for ID consistency
-        results = self.model.track(frame, persist=True, verbose=False, classes=[0]) # class 0 = person
-        
-        # We can use the plot from ultralytics as a base or draw everything ourselves
-        # annotated_frame = results[0].plot(probs=False)
-        annotated_frame = frame.copy()
-
-        if results[0].boxes.id is not None:
-            boxes = results[0].boxes.xyxy.cpu().numpy()
-            track_ids = results[0].boxes.id.cpu().numpy().astype(int)
+        # Frame Skipping Logic
+        # Run inference every (self.skip_frames + 1) frames
+        if self.frame_count % (self.skip_frames + 1) == 0:
+            # Run tracking
+            results = self.model.track(frame, persist=True, verbose=False, classes=[0])
             
-            for box, track_id in zip(boxes, track_ids):
+            if results[0].boxes.id is not None:
+                self.last_boxes = results[0].boxes.xyxy.cpu().numpy()
+                self.last_track_ids = results[0].boxes.id.cpu().numpy().astype(int)
+            else:
+                self.last_boxes = []
+                self.last_track_ids = []
+                
+        # Draw on the current frame (whether executed inference or skipped)
+        annotated_frame = frame.copy()
+        
+        # Draw tracked objects from cache (last known positions)
+        if len(self.last_boxes) > 0:
+            for box, track_id in zip(self.last_boxes, self.last_track_ids):
                 x1, y1, x2, y2 = box
                 cx, cy = self._calculate_centroid(x1, y1, x2, y2)
                 
@@ -110,36 +122,34 @@ class ObjectCounter:
                 cv2.putText(annotated_frame, f"ID: {track_id}", (int(x1), int(y1)-10), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
                 
-                # History / Track Logic
-                if track_id not in self.track_history:
-                    self.track_history[track_id] = []
-                
-                # Append current centroid
-                self.track_history[track_id].append((cx, cy))
-                
-                # We need at least 2 points to check crossing
-                if len(self.track_history[track_id]) > 1:
-                    prev_cx, prev_cy = self.track_history[track_id][-2]
-                    curr_cx, curr_cy = (cx, cy)
+                # Only update history/counting on INFERENCE frames to avoid duplicate logic
+                if self.frame_count % (self.skip_frames + 1) == 0:
+                    # History / Track Logic
+                    if track_id not in self.track_history:
+                        self.track_history[track_id] = []
                     
-                    # Check crossing only if not already counted
-                    if track_id not in self.counted_ids:
-                        if self._intersect((prev_cx, prev_cy), (curr_cx, curr_cy), line_start, line_end):
-                            direction = self._get_direction((prev_cx, prev_cy), (curr_cx, curr_cy), line_start, line_end)
-                            
-                            if direction == 'in':
-                                self.in_count += 1
-                            else:
-                                self.out_count += 1
+                    self.track_history[track_id].append((cx, cy))
+                    
+                    if len(self.track_history[track_id]) > 1:
+                        prev_cx, prev_cy = self.track_history[track_id][-2]
+                        curr_cx, curr_cy = (cx, cy)
+                        
+                        if track_id not in self.counted_ids:
+                            if self._intersect((prev_cx, prev_cy), (curr_cx, curr_cy), line_start, line_end):
+                                direction = self._get_direction((prev_cx, prev_cy), (curr_cx, curr_cy), line_start, line_end)
                                 
-                            self.counted_ids.add(track_id)
-                            
-                            # Visual feedback for crossing
-                            cv2.circle(annotated_frame, (curr_cx, curr_cy), 10, (0, 0, 255), -1)
+                                if direction == 'in':
+                                    self.in_count += 1
+                                else:
+                                    self.out_count += 1
+                                    
+                                self.counted_ids.add(track_id)
+                                
+                                # Visual feedback (only instant on inference frame, but acceptable)
+                                cv2.circle(annotated_frame, (curr_cx, curr_cy), 10, (0, 0, 255), -1)
 
-                # Keep history manageable
-                if len(self.track_history[track_id]) > 30:
-                    self.track_history[track_id].pop(0)
+                    if len(self.track_history[track_id]) > 30:
+                        self.track_history[track_id].pop(0)
 
         # Draw the virtual line
         cv2.line(annotated_frame, line_start, line_end, (255, 0, 0), 3)
