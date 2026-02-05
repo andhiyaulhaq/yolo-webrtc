@@ -27,9 +27,8 @@ class ObjectCounter:
         self.in_count = 0
         self.out_count = 0
         
-        # Frame Skipping
-        self.frame_count = 0
-        self.skip_frames = 2 # Skip N frames between inferences
+        
+        # Frame Skipping (Removed in favor of async handling in Camera)
         self.last_boxes = []
         self.last_track_ids = []
         
@@ -80,94 +79,108 @@ class ObjectCounter:
         else:
             return 'in'
 
-    def process_frame(self, frame):
+    def predict(self, frame):
         """
-        Process a single frame: track objects, count crossings, and annotate.
+        Run inference on the frame.
+        Returns:
+            results: The YOLO results object (containing boxes, ids, etc.)
         """
-        self.frame_count += 1
-        height, width = frame.shape[:2]
-        
-        # Initialize dimensions if first run
-        if not hasattr(self, 'frame_width') or not hasattr(self, 'frame_height'):
-            self.frame_width = width
-            self.frame_height = height
-            # Force region init
-            if self.region is None:
-                cx = int(width * 0.5)
-                self.region = [(cx, 0), (cx, height)]
+        # Run tracking (detect + track)
+        # persist=True is important for ID tracking
+        results = self.model.track(frame, persist=True, verbose=False, classes=[0])
+        return results
 
-        # Dynamic Line Adjustment: Check if resolution changed
-        if width != self.frame_width or height != self.frame_height:
-             print(f"Resolution changed from {self.frame_width}x{self.frame_height} to {width}x{height}. Recalculating line.")
-             self.frame_width = width
-             self.frame_height = height
-             # Re-center the line
-             cx = int(width * 0.5)
-             self.region = [(cx, 0), (cx, height)]
+    def update_tracking(self, results):
+        """
+        Update tracking history and counts based on inference results.
+        Should be called in the main thread to ensure state consistency.
+        """
+        if results and results[0].boxes.id is not None:
+            self.last_boxes = results[0].boxes.xyxy.cpu().numpy()
+            self.last_track_ids = results[0].boxes.id.cpu().numpy().astype(int)
+        else:
+            self.last_boxes = []
+            self.last_track_ids = []
 
-        # Ensure region is valid
-        if self.region is None:
-             cx = int(width * 0.5)
-             self.region = [(cx, 0), (cx, height)]
-            
-        line_start = self.region[0]
-        line_end = self.region[1]
-
-        # Frame Skipping Logic
-        # Run inference every (self.skip_frames + 1) frames
-        if self.frame_count % (self.skip_frames + 1) == 0:
-            # Run tracking
-            results = self.model.track(frame, persist=True, verbose=False, classes=[0])
-            
-            if results[0].boxes.id is not None:
-                self.last_boxes = results[0].boxes.xyxy.cpu().numpy()
-                self.last_track_ids = results[0].boxes.id.cpu().numpy().astype(int)
-            else:
-                self.last_boxes = []
-                self.last_track_ids = []
-                
-        # Draw on the current frame (whether executed inference or skipped)
-        annotated_frame = frame.copy()
-        
-        # Draw tracked objects from cache (last known positions)
+        # History / Track Logic
         if len(self.last_boxes) > 0:
             for box, track_id in zip(self.last_boxes, self.last_track_ids):
                 x1, y1, x2, y2 = box
                 cx, cy = self._calculate_centroid(x1, y1, x2, y2)
                 
+                if track_id not in self.track_history:
+                    self.track_history[track_id] = []
+                
+                self.track_history[track_id].append((cx, cy))
+                
+                if len(self.track_history[track_id]) > 1:
+                    prev_cx, prev_cy = self.track_history[track_id][-2]
+                    curr_cx, curr_cy = (cx, cy)
+                    
+                    if track_id not in self.counted_ids:
+                        line_start = self.region[0]
+                        line_end = self.region[1]
+                        if self._intersect((prev_cx, prev_cy), (curr_cx, curr_cy), line_start, line_end):
+                            direction = self._get_direction((prev_cx, prev_cy), (curr_cx, curr_cy), line_start, line_end)
+                            
+                            if direction == 'in':
+                                self.in_count += 1
+                            else:
+                                self.out_count += 1
+                                
+                            self.counted_ids.add(track_id)
+                            
+                            # Note: Visual feedback for counting is handled in annotate_frame 
+                            # implicitly if we want to add a temporary marker, 
+                            # but for now we trust the overlay text.
+
+                if len(self.track_history[track_id]) > 30:
+                    self.track_history[track_id].pop(0)
+
+    def annotate_frame(self, frame):
+        """
+        Draw the virtual line, bounding boxes, and counts on the frame.
+        Returns the annotated frame.
+        """
+        annotated_frame = frame.copy()
+        height, width = annotated_frame.shape[:2]
+
+        # Initialize/Adjust region logic
+        if not hasattr(self, 'frame_width') or not hasattr(self, 'frame_height'):
+            self.frame_width = width
+            self.frame_height = height
+            if self.region is None:
+                cx = int(width * 0.5)
+                self.region = [(cx, 0), (cx, height)]
+
+        # Dynamic Line Adjustment
+        if width != self.frame_width or height != self.frame_height:
+             # print(f"Resolution changed from {self.frame_width}x{self.frame_height} to {width}x{height}.")
+             self.frame_width = width
+             self.frame_height = height
+             cx = int(width * 0.5)
+             self.region = [(cx, 0), (cx, height)]
+
+        if self.region is None:
+             cx = int(width * 0.5)
+             self.region = [(cx, 0), (cx, height)]
+
+        line_start = self.region[0]
+        line_end = self.region[1]
+
+        # Draw Objects
+        if len(self.last_boxes) > 0:
+            for box, track_id in zip(self.last_boxes, self.last_track_ids):
+                x1, y1, x2, y2 = box
                 # Draw Box
                 cv2.rectangle(annotated_frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
                 cv2.putText(annotated_frame, f"ID: {track_id}", (int(x1), int(y1)-10), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
                 
-                # Only update history/counting on INFERENCE frames to avoid duplicate logic
-                if self.frame_count % (self.skip_frames + 1) == 0:
-                    # History / Track Logic
-                    if track_id not in self.track_history:
-                        self.track_history[track_id] = []
-                    
-                    self.track_history[track_id].append((cx, cy))
-                    
-                    if len(self.track_history[track_id]) > 1:
-                        prev_cx, prev_cy = self.track_history[track_id][-2]
-                        curr_cx, curr_cy = (cx, cy)
-                        
-                        if track_id not in self.counted_ids:
-                            if self._intersect((prev_cx, prev_cy), (curr_cx, curr_cy), line_start, line_end):
-                                direction = self._get_direction((prev_cx, prev_cy), (curr_cx, curr_cy), line_start, line_end)
-                                
-                                if direction == 'in':
-                                    self.in_count += 1
-                                else:
-                                    self.out_count += 1
-                                    
-                                self.counted_ids.add(track_id)
-                                
-                                # Visual feedback (only instant on inference frame, but acceptable)
-                                cv2.circle(annotated_frame, (curr_cx, curr_cy), 10, (0, 0, 255), -1)
-
-                    if len(self.track_history[track_id]) > 30:
-                        self.track_history[track_id].pop(0)
+                # Draw centroid/trace if desired? (Optional)
+                x1, y1, x2, y2 = box
+                cx, cy = self._calculate_centroid(x1, y1, x2, y2)
+                cv2.circle(annotated_frame, (cx, cy), 4, (0, 255, 0), -1)
 
         # Draw the virtual line
         cv2.line(annotated_frame, line_start, line_end, (255, 0, 0), 3)
