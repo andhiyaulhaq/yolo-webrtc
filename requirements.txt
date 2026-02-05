@@ -1,0 +1,10 @@
+ultralytics
+opencv-python
+fastapi
+uvicorn
+aiortc
+av
+firebase-admin
+python-dotenv
+numpy
+lap
