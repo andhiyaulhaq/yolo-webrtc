@@ -173,24 +173,21 @@ class ObjectCounter:
             for box, track_id in zip(self.last_boxes, self.last_track_ids):
                 x1, y1, x2, y2 = box
                 # Draw Box
-                cv2.rectangle(annotated_frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
+                cv2.rectangle(annotated_frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 2)
                 cv2.putText(annotated_frame, f"ID: {track_id}", (int(x1), int(y1)-10), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
                 
                 # Draw centroid/trace if desired? (Optional)
                 x1, y1, x2, y2 = box
                 cx, cy = self._calculate_centroid(x1, y1, x2, y2)
-                cv2.circle(annotated_frame, (cx, cy), 4, (0, 255, 0), -1)
+                cv2.circle(annotated_frame, (cx, cy), 4, (0, 0, 255), -1)
 
         # Draw the virtual line
         cv2.line(annotated_frame, line_start, line_end, (255, 0, 0), 3)
         cv2.putText(annotated_frame, "Counting Line", (line_start[0], line_start[1] - 10), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
 
-        # Overlay Counts
-        overlay_text = f"In: {self.in_count} | Out: {self.out_count}"
-        cv2.putText(annotated_frame, overlay_text, (20, 40), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
+
 
         return annotated_frame
 
