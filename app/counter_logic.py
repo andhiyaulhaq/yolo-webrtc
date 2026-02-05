@@ -2,6 +2,107 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 from collections import deque
+import time
+
+class KalmanBoxTracker:
+    """
+    A simple Kalman Filter for tracking bounding boxes in image space.
+    State: [x, y, w, h, dx, dy, dw, dh]
+    Measurement: [x, y, w, h]
+    """
+    def __init__(self, bbox):
+        # Initialize Kalman Filter
+        # Dynamo = 8 (x, y, w, h, vx, vy, vw, vh)
+        # Measure = 4 (x, y, w, h)
+        self.kf = cv2.KalmanFilter(8, 4)
+        
+        # Transition Matrix (F)
+        # x = x + vx, etc.
+        self.kf.transitionMatrix = np.array([
+            [1, 0, 0, 0, 1, 0, 0, 0],
+            [0, 1, 0, 0, 0, 1, 0, 0],
+            [0, 0, 1, 0, 0, 0, 1, 0],
+            [0, 0, 0, 1, 0, 0, 0, 1],
+            [0, 0, 0, 0, 1, 0, 0, 0],
+            [0, 0, 0, 0, 0, 1, 0, 0],
+            [0, 0, 0, 0, 0, 0, 1, 0],
+            [0, 0, 0, 0, 0, 0, 0, 1]
+        ], np.float32)
+
+        # Measurement Matrix (H)
+        # We measure x, y, w, h directly
+        self.kf.measurementMatrix = np.array(np.eye(4, 8), np.float32)
+
+        # Process Noise Covariance (Q)
+        # Controls how much we trust the model evolution
+        self.kf.processNoiseCov = np.array(np.eye(8, 8), np.float32) * 1e-2
+        # Velocity terms might change faster
+        self.kf.processNoiseCov[4:, 4:] *= 5.0
+
+        # Measurement Noise Covariance (R)
+        # Controls how much we trust the measurement
+        self.kf.measurementNoiseCov = np.array(np.eye(4, 4), np.float32) * 1e-1
+
+        # Error Covariance (P)
+        self.kf.errorCovPost = np.eye(8, dtype=np.float32)
+
+        # Initial State
+        x, y, x2, y2 = bbox
+        w = x2 - x
+        h = y2 - y
+        self.kf.statePost = np.array([[x], [y], [w], [h], [0], [0], [0], [0]], np.float32)
+        
+        self.time_since_update = 0
+        self.history = []
+        self.hits = 0
+        self.hit_streak = 0
+        self.age = 0
+        
+        # Keep track of last predicted box for smooth rendering
+        self.pred_box = bbox
+
+    def update(self, bbox):
+        """
+        Updates the state vector with observed bbox.
+        """
+        self.time_since_update = 0
+        self.history = []
+        self.hits += 1
+        self.hit_streak += 1
+        x, y, x2, y2 = bbox
+        w = x2 - x
+        h = y2 - y
+        measurement = np.array([[x], [y], [w], [h]], np.float32)
+        self.kf.correct(measurement)
+
+    def predict(self):
+        """
+        Advances the state vector and returns the predicted bounding box.
+        """
+        if((self.kf.statePost[6]+self.kf.statePost[2])<=0):
+            self.kf.statePost[6] *= 0.0
+        
+        self.kf.predict()
+        self.age += 1
+        if(self.time_since_update>0):
+            self.hit_streak = 0
+        self.time_since_update += 1
+        
+        # Return predicted box
+        s = self.kf.statePost
+        x, y, w, h = s[0][0], s[1][0], s[2][0], s[3][0]
+        
+        self.pred_box = [x, y, x + w, y + h]
+        self.history.append(self.pred_box)
+        return self.pred_box
+
+    def get_state(self):
+        """
+        Returns the current bounding box estimate.
+        """
+        s = self.kf.statePost
+        x, y, w, h = s[0][0], s[1][0], s[2][0], s[3][0]
+        return [x, y, x + w, y + h]
 
 class ObjectCounter:
     def __init__(self, model_path='models/yolov8n.pt', region=None):
@@ -20,20 +121,19 @@ class ObjectCounter:
         self.region = region 
         
         # Tracking data
-        self.track_history = {} # id -> list of recent centroids
+        # self.track_history = {} # OLD: id -> list of recent centroids
+        self.tracks = {} # id -> KalmanBoxTracker
         self.counted_ids = set()
         
         # Counts
         self.in_count = 0
         self.out_count = 0
         
+        # Temporary storage for latest detection results to sync with main thread
+        self.latest_results = None
         
-        # Frame Skipping (Removed in favor of async handling in Camera)
-        self.last_boxes = []
-        self.last_track_ids = []
-        
-        # Line Crossing Buffer (to avoid immediate re-triggering, though counted_ids handles one-time count)
-        # We store history to determine direction
+        # History for drawing trails (optional)
+        self.trail_history = {} 
 
     def set_region(self, region):
         """
@@ -48,10 +148,10 @@ class ObjectCounter:
     def _intersect(self, A, B, C, D):
         """
         Return true if line segments AB and CD intersect
-        A, B are points of the trajectory
-        C, D are points of the counting line
         """
         def ccw(p1, p2, p3):
+            # Check for collinear points to avoid division by zero or errors
+            # BUT for this simple case, standard CCW is fine.
             return (p3[1] - p1[1]) * (p2[0] - p1[0]) > (p2[1] - p1[1]) * (p3[0] - p1[0])
 
         return ccw(A, C, D) != ccw(B, C, D) and ccw(A, B, C) != ccw(A, B, D)
@@ -61,18 +161,8 @@ class ObjectCounter:
         Determine direction of crossing using cross product approach.
         Returns 'in' or 'out'.
         """
-        # We can define 'in' as moving from 'above' to 'below' the line or vice versa depending on needs.
-        # Let's use the cross product of the line vector and the point vector to determine side.
-        
-        # Line vector
         line_vec = (line_end[0] - line_start[0], line_end[1] - line_start[1])
-        
-        # Check p1 position relative to line
         cross_p1 = line_vec[0] * (p1[1] - line_start[1]) - line_vec[1] * (p1[0] - line_start[0])
-        
-        # If cross_p1 is positive, it's on one side. 
-        # We assume if it crossed, p2 is on the other side.
-        # Let's say positive -> negative is 'in' (Entry)
         
         if cross_p1 < 0:
             return 'out'
@@ -83,64 +173,50 @@ class ObjectCounter:
         """
         Run inference on the frame.
         Returns:
-            results: The YOLO results object (containing boxes, ids, etc.)
+            results: The YOLO results object
         """
         # Run tracking (detect + track)
-        # persist=True is important for ID tracking
         results = self.model.track(frame, persist=True, verbose=False, classes=[0])
         return results
 
     def update_tracking(self, results):
         """
         Update tracking history and counts based on inference results.
-        Should be called in the main thread to ensure state consistency.
+        Should be called in the main thread or a thread-safe manner.
         """
+        self.latest_results = results # Store for debug if needed
+
+        detected_ids = []
         if results and results[0].boxes.id is not None:
-            self.last_boxes = results[0].boxes.xyxy.cpu().numpy()
-            self.last_track_ids = results[0].boxes.id.cpu().numpy().astype(int)
-        else:
-            self.last_boxes = []
-            self.last_track_ids = []
+            boxes = results[0].boxes.xyxy.cpu().numpy()
+            track_ids = results[0].boxes.id.cpu().numpy().astype(int)
+            
+            for box, track_id in zip(boxes, track_ids):
+                detected_ids.append(track_id)
+                
+                # Create or Update Tracker
+                if track_id not in self.tracks:
+                    self.tracks[track_id] = KalmanBoxTracker(box)
+                else:
+                    self.tracks[track_id].update(box)
+        
+        # Remove tracks that are lost (optional: separate cleanup logic)
+        # For now, we rely on the age/time_since_update in annotate_frame to decide what to draw
+        
+        # We can proactively remove very old tracks here to save memory
+        track_ids_to_remove = []
+        for tid, trk in self.tracks.items():
+            if trk.time_since_update > 60: # Missing for ~2 seconds at 30fps
+                 track_ids_to_remove.append(tid)
+        
+        for tid in track_ids_to_remove:
+            del self.tracks[tid]
 
-        # History / Track Logic
-        if len(self.last_boxes) > 0:
-            for box, track_id in zip(self.last_boxes, self.last_track_ids):
-                x1, y1, x2, y2 = box
-                cx, cy = self._calculate_centroid(x1, y1, x2, y2)
-                
-                if track_id not in self.track_history:
-                    self.track_history[track_id] = []
-                
-                self.track_history[track_id].append((cx, cy))
-                
-                if len(self.track_history[track_id]) > 1:
-                    prev_cx, prev_cy = self.track_history[track_id][-2]
-                    curr_cx, curr_cy = (cx, cy)
-                    
-                    if track_id not in self.counted_ids:
-                        line_start = self.region[0]
-                        line_end = self.region[1]
-                        if self._intersect((prev_cx, prev_cy), (curr_cx, curr_cy), line_start, line_end):
-                            direction = self._get_direction((prev_cx, prev_cy), (curr_cx, curr_cy), line_start, line_end)
-                            
-                            if direction == 'in':
-                                self.in_count += 1
-                            else:
-                                self.out_count += 1
-                                
-                            self.counted_ids.add(track_id)
-                            
-                            # Note: Visual feedback for counting is handled in annotate_frame 
-                            # implicitly if we want to add a temporary marker, 
-                            # but for now we trust the overlay text.
-
-                if len(self.track_history[track_id]) > 30:
-                    self.track_history[track_id].pop(0)
 
     def annotate_frame(self, frame):
         """
         Draw the virtual line, bounding boxes, and counts on the frame.
-        Returns the annotated frame.
+        Uses Kalman Filter prediction for smooth updates.
         """
         annotated_frame = frame.copy()
         height, width = annotated_frame.shape[:2]
@@ -155,7 +231,6 @@ class ObjectCounter:
 
         # Dynamic Line Adjustment
         if width != self.frame_width or height != self.frame_height:
-             # print(f"Resolution changed from {self.frame_width}x{self.frame_height} to {width}x{height}.")
              self.frame_width = width
              self.frame_height = height
              cx = int(width * 0.5)
@@ -168,26 +243,69 @@ class ObjectCounter:
         line_start = self.region[0]
         line_end = self.region[1]
 
-        # Draw Objects
-        if len(self.last_boxes) > 0:
-            for box, track_id in zip(self.last_boxes, self.last_track_ids):
-                x1, y1, x2, y2 = box
-                # Draw Box
-                cv2.rectangle(annotated_frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 2)
-                cv2.putText(annotated_frame, f"ID: {track_id}", (int(x1), int(y1)-10), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+        # --- PREDICT & DRAW TRACKS ---
+        # Draw Objects based on Kalman Prediction
+        # This function is called every video frame.
+        
+        # We iterate over all active trackers
+        
+        for track_id, tracker in self.tracks.items():
+            # Hide tracks that haven't been seen in a while to avoid ghosting
+            if tracker.time_since_update > 15: # Hide if missing for >0.5s (approx)
+                continue
                 
-                # Draw centroid/trace if desired? (Optional)
-                x1, y1, x2, y2 = box
-                cx, cy = self._calculate_centroid(x1, y1, x2, y2)
-                cv2.circle(annotated_frame, (cx, cy), 4, (0, 0, 255), -1)
+            # PREDICT NEXT POSITION
+            # This advances the KF state. 
+            # Note: If inference is slow, we might predict multiple times 
+            # effectively extrapolating strictly based on velocity.
+            # When inference returns, 'update()' will correct the state.
+            pred_box = tracker.predict()
+            
+            # Extract coordinates from prediction (can be float)
+            # pred_box returns [x1, y1, x2, y2]
+            # It might return arrays, so ensure scalars
+            x1 = float(pred_box[0])
+            y1 = float(pred_box[1])
+            x2 = float(pred_box[2])
+            y2 = float(pred_box[3])
+            
+            # --- COUNTING LOGIC (Using Predicted Centroids) ---
+            cx, cy = self._calculate_centroid(x1, y1, x2, y2)
+            
+            # Track Trail
+            if track_id not in self.trail_history:
+                self.trail_history[track_id] = []
+            self.trail_history[track_id].append((cx, cy))
+            if len(self.trail_history[track_id]) > 30:
+                self.trail_history[track_id].pop(0)
+
+            # Check Crossing
+            if len(self.trail_history[track_id]) > 1:
+                prev_cx, prev_cy = self.trail_history[track_id][-2]
+                curr_cx, curr_cy = (cx, cy)
+                
+                if track_id not in self.counted_ids:
+                    if self._intersect((prev_cx, prev_cy), (curr_cx, curr_cy), line_start, line_end):
+                        direction = self._get_direction((prev_cx, prev_cy), (curr_cx, curr_cy), line_start, line_end)
+                        if direction == 'in':
+                            self.in_count += 1
+                        else:
+                            self.out_count += 1
+                        self.counted_ids.add(track_id)
+
+            # --- DRAWING ---
+            cv2.rectangle(annotated_frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 2)
+            # Show ID and maybe "Pred" to indicate it's predictive
+            cv2.putText(annotated_frame, f"ID: {track_id}", (int(x1), int(y1)-10), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+            
+            # Draw centroid
+            cv2.circle(annotated_frame, (cx, cy), 4, (0, 0, 255), -1)
+
 
         # Draw the virtual line
         cv2.line(annotated_frame, line_start, line_end, (255, 0, 0), 3)
         cv2.putText(annotated_frame, "Counting Line", (line_start[0], line_start[1] - 10), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
 
-
-
         return annotated_frame
-
