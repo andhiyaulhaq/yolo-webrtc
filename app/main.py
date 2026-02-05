@@ -30,6 +30,40 @@ app.add_middleware(
 # Global set to store peer connections
 pcs = set()
 
+# WebSocket Manager
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: str):
+        # iterate over a copy to avoid modification issues during iteration
+        for connection in list(self.active_connections):
+            try:
+                await connection.send_text(message)
+            except Exception as e:
+                # If sending fails, assume disconnected
+                logger.error(f"Error sending message: {e}")
+                self.active_connections.remove(connection)
+
+manager = ConnectionManager()
+
+@app.websocket("/ws/data")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            # Keep the connection alive, wait for client messages or disconnect
+            await websocket.receive_text()
+    except Exception:
+        manager.disconnect(websocket)
+
 @app.on_event("shutdown")
 async def on_shutdown():
     # Close all peer connections on shutdown
@@ -61,7 +95,14 @@ async def offer(request: Request):
     def on_track(track):
         logger.info(f"Track {track.kind} received")
         if track.kind == "video":
-            local_video = VideoTransformTrack(track)
+            # Callback to broadcast counts
+            def broadcast_counts(in_count, out_count):
+                import json
+                data = json.dumps({"in_count": in_count, "out_count": out_count})
+                # Schedule broadcast on the event loop
+                asyncio.create_task(manager.broadcast(data))
+
+            local_video = VideoTransformTrack(track, update_callback=broadcast_counts)
             pc.addTrack(local_video)
         
         @track.on("ended")

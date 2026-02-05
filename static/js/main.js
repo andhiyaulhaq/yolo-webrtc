@@ -1,0 +1,239 @@
+// DOM Elements
+const remoteVideo = document.getElementById('remoteVideo');
+const startButton = document.getElementById('startButton');
+const videoPlaceholder = document.getElementById('videoPlaceholder');
+const connectionStatus = document.getElementById('connectionStatus');
+const inCountDisplay = document.getElementById('inCount');
+const outCountDisplay = document.getElementById('outCount');
+const latencyVal = document.getElementById('latencyVal');
+const fpsVal = document.getElementById('fpsVal');
+
+// WebRTC Configuration
+const config = {
+    sdpSemantics: 'unified-plan',
+    iceServers: [
+        { urls: ['stun:stun.l.google.com:19302'] } // Public STUN server
+    ]
+};
+
+let pc = null;
+let ws = null;
+let reconnectInterval = null;
+
+// Helper function for status updates
+function updateStatus(state) {
+    const statusText = connectionStatus.querySelector('.status-text');
+    connectionStatus.className = 'connection-status ' + state;
+
+    if (state === 'connected') {
+        statusText.textContent = 'Live';
+    } else if (state === 'connecting') {
+        statusText.textContent = 'Connecting...';
+        connectionStatus.classList.add('connecting'); // You might want to add animation
+    } else {
+        statusText.textContent = 'Disconnected';
+    }
+}
+
+// WebSocket Connection
+function connectWebSocket() {
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${location.host}/ws/data`;
+
+    ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+        console.log('WebSocket connected');
+    };
+
+    ws.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            if (data.in_count !== undefined) {
+                // Animate numbers? Simple text update for now
+                inCountDisplay.textContent = data.in_count;
+                outCountDisplay.textContent = data.out_count;
+            }
+        } catch (e) {
+            console.error('Error parsing WS message:', e);
+        }
+    };
+
+    ws.onclose = () => {
+        console.log('WebSocket disconnected. Reconnecting in 3s...');
+        setTimeout(connectWebSocket, 3000);
+    };
+}
+
+// WebRTC Negotiation
+async function startStream() {
+    updateStatus('connecting');
+    startButton.disabled = true;
+
+    // valid states: closed, failed, disconnected, new
+    if (pc) {
+        pc.close();
+    }
+
+    pc = new RTCPeerConnection(config);
+
+    // Handle incoming track (Annotated Video from Server)
+    pc.ontrack = (evt) => {
+        console.log('Track received:', evt.track.kind);
+        if (evt.track.kind === 'video') {
+            remoteVideo.srcObject = evt.streams[0];
+            videoPlaceholder.classList.add('hidden');
+            updateStatus('connected');
+        }
+    };
+
+    pc.oniceconnectionstatechange = () => {
+        console.log('ICE State:', pc.iceConnectionState);
+        if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+            updateStatus('disconnected');
+            videoPlaceholder.classList.remove('hidden');
+            startButton.disabled = false;
+        }
+    };
+
+    try {
+        // Get Local Stream (Camera)
+        const localStream = await navigator.mediaDevices.getUserMedia({
+            video: {
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+                facingMode: 'environment' // Use back camera on mobile if available
+            },
+            audio: false
+        });
+
+        // Add local track to PC
+        // This triggers 'on_track' on the server side
+        localStream.getTracks().forEach(track => {
+            pc.addTrack(track, localStream);
+        });
+
+        // Create Offer
+        const offer = await pc.createOffer();
+
+        // Force VP8 Codec
+        let sdp = offer.sdp;
+        // Simple SDP munging to prioritize VP8
+        // This regex finds the payload type for VP8 and moves it to the front of the m=video line
+        const lines = sdp.split('\n');
+        let vp8Payload = null;
+
+        // Find VP8 payload type
+        /* 
+           Looking for: a=rtpmap:<payload> VP8/90000 
+        */
+        for (let line of lines) {
+            if (line.includes('VP8/90000')) {
+                const match = line.match(/a=rtpmap:(\d+) VP8\/90000/);
+                if (match && match[1]) {
+                    vp8Payload = match[1];
+                    break;
+                }
+            }
+        }
+
+        if (vp8Payload) {
+            console.log("Forcing VP8 Payload:", vp8Payload);
+            for (let i = 0; i < lines.length; i++) {
+                if (lines[i].startsWith('m=video')) {
+                    // m=video <port> <proto> <payloads>...
+                    // Remove VP8 from list and add to front
+                    let parts = lines[i].split(' ');
+                    // keep first 3 parts (m=video, port, proto)
+                    const header = parts.slice(0, 3);
+                    const payloads = parts.slice(3);
+
+                    const newPayloads = payloads.filter(p => p !== vp8Payload);
+                    newPayloads.unshift(vp8Payload);
+
+                    lines[i] = header.concat(newPayloads).join(' ');
+                    break;
+                }
+            }
+            sdp = lines.join('\n');
+        }
+
+        const offerWithVP8 = {
+            type: offer.type,
+            sdp: sdp
+        };
+
+        await pc.setLocalDescription(offerWithVP8);
+
+        // Wait for ICE gathering to complete (simple approach) or rely on server handling
+        await new Promise((resolve) => {
+            if (pc.iceGatheringState === 'complete') {
+                resolve();
+            } else {
+                const checkState = () => {
+                    if (pc.iceGatheringState === 'complete') {
+                        pc.removeEventListener('icegatheringstatechange', checkState);
+                        resolve();
+                    }
+                };
+                pc.addEventListener('icegatheringstatechange', checkState);
+                // Fallback timeout in case 'complete' never fires (some browsers)
+                setTimeout(resolve, 2000);
+            }
+        });
+
+        const localDesc = pc.localDescription;
+
+        // Send to server
+        const response = await fetch('/offer', {
+            method: 'POST',
+            body: JSON.stringify({
+                sdp: localDesc.sdp,
+                type: localDesc.type
+            }),
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`Server error: ${response.status}`);
+        }
+
+        const answer = await response.json();
+        await pc.setRemoteDescription(answer);
+
+    } catch (e) {
+        console.error('Failed to start stream:', e);
+        updateStatus('disconnected');
+        startButton.disabled = false;
+        alert('Could not start stream. ' + e.message);
+    }
+}
+
+// Start Stats Interval
+setInterval(() => {
+    if (pc && pc.connectionState === 'connected') {
+        pc.getStats().then(stats => {
+            stats.forEach(report => {
+                if (report.type === 'inbound-rtp' && report.kind === 'video') {
+                    // Update FPS if available
+                    if (report.framesPerSecond) {
+                        fpsVal.textContent = Math.round(report.framesPerSecond);
+                    }
+                }
+                if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+                    // Update Latency (Round Trip Time)
+                    if (report.currentRoundTripTime) {
+                        latencyVal.textContent = Math.round(report.currentRoundTripTime * 1000) + ' ms';
+                    }
+                }
+            });
+        });
+    }
+}, 1000);
+
+
+// Initialize
+startButton.addEventListener('click', startStream);
+connectWebSocket();

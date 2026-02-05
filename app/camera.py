@@ -9,10 +9,11 @@ class VideoTransformTrack(MediaStreamTrack):
     """
     kind = "video"
 
-    def __init__(self, track):
+    def __init__(self, track, update_callback=None):
         super().__init__()
         self.track = track
         self.counter = ObjectCounter()
+        self.update_callback = update_callback
 
     async def recv(self):
         # Read the frame from the source track
@@ -24,6 +25,13 @@ class VideoTransformTrack(MediaStreamTrack):
         # Process the frame using ObjectCounter
         # This will update counts and return an annotated image
         annotated_img = self.counter.process_frame(img)
+
+        # Trigger callback with current counts
+        if self.update_callback:
+             # We can check if counts changed to minimize traffic, 
+             # but strictly speaking broadcasting current state is fine.
+             # Ideally we check change in process_frame but accessing properties is cheap.
+             self.update_callback(self.counter.in_count, self.counter.out_count)
 
         # Convert back to av.VideoFrame
         new_frame = av.VideoFrame.from_ndarray(annotated_img, format="bgr24")

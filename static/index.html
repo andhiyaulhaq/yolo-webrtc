@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI People Counter</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+    <div class="app-container">
+        <nav class="navbar">
+            <div class="logo">
+                <span class="logo-icon">👁️</span>
+                <span class="logo-text">Vision<span class="highlight">Flow</span></span>
+            </div>
+            <div class="connection-status" id="connectionStatus">
+                <span class="status-dot"></span>
+                <span class="status-text">Ready</span>
+            </div>
+        </nav>
+
+        <main class="dashboard-grid">
+            <!-- Video Feed Section -->
+            <section class="video-card">
+                <div class="card-header">
+                    <h2>Live Feed</h2>
+                    <div class="live-badge">LIVE</div>
+                </div>
+                <div class="video-wrapper">
+                    <video id="remoteVideo" autoplay playsinline muted></video>
+                    <div class="video-placeholder" id="videoPlaceholder">
+                        <div class="placeholder-content">
+                            <div class="pulse-ring"></div>
+                            <button id="startButton" class="start-btn">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+                                    fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                    stroke-linejoin="round">
+                                    <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                                </svg>
+                                Start Analysis
+                            </button>
+                            <p>Connect to camera stream</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Stats Section -->
+            <section class="stats-column">
+                <div class="stat-card card-in">
+                    <div class="stat-header">
+                        <span class="stat-title">Entered</span>
+                        <div class="icon-box">IN</div>
+                    </div>
+                    <div class="stat-number" id="inCount">0</div>
+                    <div class="stat-chart-line"></div>
+                </div>
+
+                <div class="stat-card card-out">
+                    <div class="stat-header">
+                        <span class="stat-title">Exited</span>
+                        <div class="icon-box">OUT</div>
+                    </div>
+                    <div class="stat-number" id="outCount">0</div>
+                    <div class="stat-chart-line"></div>
+                </div>
+
+                <div class="info-card">
+                    <h3>System Status</h3>
+                    <div class="info-row">
+                        <span>Latency</span>
+                        <span class="info-val" id="latencyVal">-- ms</span>
+                    </div>
+                    <div class="info-row">
+                        <span>FPS</span>
+                        <span class="info-val" id="fpsVal">--</span>
+                    </div>
+                    <div class="info-row">
+                        <span>Model</span>
+                        <span class="info-val">YOLOv8n</span>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+    <script src="js/main.js"></script>
+</body>
+
+</html>
