@@ -87,10 +87,28 @@ class ObjectCounter:
         self.frame_count += 1
         height, width = frame.shape[:2]
         
-        # Initialize default region if not set
+        # Initialize dimensions if first run
+        if not hasattr(self, 'frame_width') or not hasattr(self, 'frame_height'):
+            self.frame_width = width
+            self.frame_height = height
+            # Force region init
+            if self.region is None:
+                cx = int(width * 0.5)
+                self.region = [(cx, 0), (cx, height)]
+
+        # Dynamic Line Adjustment: Check if resolution changed
+        if width != self.frame_width or height != self.frame_height:
+             print(f"Resolution changed from {self.frame_width}x{self.frame_height} to {width}x{height}. Recalculating line.")
+             self.frame_width = width
+             self.frame_height = height
+             # Re-center the line
+             cx = int(width * 0.5)
+             self.region = [(cx, 0), (cx, height)]
+
+        # Ensure region is valid
         if self.region is None:
-            cx = int(width * 0.5)
-            self.region = [(cx, 0), (cx, height)]
+             cx = int(width * 0.5)
+             self.region = [(cx, 0), (cx, height)]
             
         line_start = self.region[0]
         line_end = self.region[1]
