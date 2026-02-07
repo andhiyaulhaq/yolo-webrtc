@@ -1,103 +1,130 @@
-# People Counter AI Pipeline
+# YOLO WebRTC Object Counter
 
-This project is a sophisticated **IoT + AI pipeline** that bridges low-latency video streaming with intelligent edge analytics. It is designed for **asynchrony** and **ease of integration**, transitioning from a C++ mindset to Python for prototyping.
+A real-time object detection and counting application that processes video streams from a client device using YOLOv8 (Ultralytics) and WebRTC. The system counts people entering/exiting a defined zone and provides real-time updates via a Web UI and WebSocket.
 
-## 🏗️ 1. Project Objective
+## 🌟 Features
 
-To build a real-time system that detects and counts people crossing a boundary in a video feed. The system must provide a live visual stream, a data dashboard for counts, and mobile alerts for specific triggers.
+*   **Real-time Inference**: Uses YOLOv8 for high-performance object detection.
+*   **WebRTC Integration**: Low-latency video streaming between client (browser) and server.
+*   **Bi-directional Counting**: Counts objects crossing a virtual line (In/Out).
+*   **Live Updates**: WebSocket updates for count statistics.
+*   **Push Notifications**: Firebase Cloud Messaging integration for threshold-based alerts.
+*   **Model Selection**: Dynamically switch between different YOLO models.
+*   **Responsive UI**: Modern web interface with real-time stats and controls.
 
-## 🛠️ 2. The Tech Stack
+## 🏗 Architecture
 
-You are utilizing four distinct communication and processing layers:
+![Architecture Diagram Placeholder](docs/architecture_diagram.png)
+*(Placeholder: Add an architecture diagram showing Client <-> WebRTC <-> Server <-> YOLO Model)*
 
-*   **AI Engine:** **Python + PyTorch + YOLOv8**. This handles the "brain" of the project (detection and tracking).
-*   **Video Streaming:** **WebRTC (`aiortc`)**. Provides the < 500ms latency needed for "real-time" visual monitoring.
-*   **Data Channel:** **WebSockets (FastAPI)**. Pushes the raw integer counts (In/Out) to the web dashboard instantly.
-*   **Alerting:** **FCM (Firebase Cloud Messaging)**. Handles "out-of-band" notifications to mobile devices when thresholds are met.
+### Backend
+*   **Framework**: [FastAPI](https://fastapi.tiangolo.com/) (Async Python framework)
+*   **WebRTC**: `aiortc` for handling media streams.
+*   **YOLO Implementation**: [Ultralytics YOLOv8](https://docs.ultralytics.com/) (`ultralytics` package).
+*   **Database**: SQLite for persistent storage of counts and alert logs.
+*   **Notifications**: Firebase Admin SDK.
 
-## 📐 3. System Architecture
+### Frontend
+*   **Tech Stack**: Vanilla HTML/JS/CSS.
+*   **Connection**:
+    *   **WebRTC**: Establishes a peer-to-peer connection for sending the camera stream to the server and receiving the annotated stream back.
+    *   **WebSocket**: Connects to `ws://{host}/ws/data` to receive real-time updates on `in_count` and `out_count`.
+*   **Rendering**: The server processes video frames, draws bounding boxes/counters, and streams the *annotated video* back to the client via WebRTC. The client simply displays this video stream.
 
-The flow is designed to handle "Heavy" data (Video) and "Light" data (Counts) separately to ensure performance.
+## 🚀 Installation & Setup
 
-1.  **Ingestion:** The server receives a video stream (via WebRTC from a browser or RTSP from an IP camera).
-2.  **Processing:** Inside the `aiortc` loop, each frame is passed to **YOLO**.
-    *   **Tracking:** Assigns a unique ID to each person.
-    *   **Counting:** Detects when a specific ID's centroid crosses a pre-defined line.
-3.  **Distribution:**
-    *   The **annotated frame** (with boxes and lines) is sent back via **WebRTC**.
-    *   The **numerical data** is pushed via **WebSockets**.
-    *   **Logic Check:** If `count > limit`, a request is sent to **FCM**.
+### Prerequisites
+*   Python 3.9+
+*   Webcam or video source
 
-## 📁 4. Project Structure
-
-To keep the prototype organized, the structure separates the **AI logic**, **WebRTC streaming**, and **messaging services**.
-
-```text
-people-counter-ai/
-├── app/
-│   ├── __init__.py
-│   ├── main.py              # FastAPI entry point & Signaling server
-│   ├── camera.py            # WebRTC MediaStreamTrack & YOLO logic
-│   ├── counter_logic.py     # Custom YOLO tracking & line-crossing rules
-│   └── notifier.py          # FCM (Firebase) alert functions
-├── models/
-│   └── yolov8n.pt           # Your PyTorch model file
-├── static/
-│   ├── index.html           # Dashboard UI
-│   ├── js/
-│   │   └── main.js          # WebRTC & WebSocket client-side logic
-│   └── css/
-│       └── style.css
-├── .env                     # API Keys, FCM Config, & Camera URLs
-├── requirements.txt         # Project dependencies
-└── firebase_creds.json      # Service account key for FCM
+### 1. Clone the Repository
+```bash
+git clone https://github.com/yourusername/yolo-webrtc.git
+cd yolo-webrtc
 ```
 
-### 📄 Essential Files Breakdown
+### 2. Create a Virtual Environment
+```bash
+# Windows
+python -m venv venv
+.\venv\Scripts\activate
 
-#### `requirements.txt`
-Core libraries needed:
-*   `fastapi`, `uvicorn`
-*   `aiortc`, `av`
-*   `ultralytics`, `opencv-python`
-*   `firebase-admin`, `python-dotenv`
+# Linux/macOS
+python3 -m venv venv
+source venv/bin/activate
+```
 
-#### `app/camera.py`
-The "heart" of the project. Inherits from `aiortc.VideoStreamTrack`.
-1.  Receives a frame.
-2.  Passes it to `model.track()`.
-3.  Draws counting lines.
-4.  Returns the annotated frame.
+### 3. Install Dependencies
+```bash
+pip install -r requirements.txt
+```
 
-#### `app/main.py`
-Handles **Signaling** and **WebSockets**.
-*   **POST `/offer`**: Receives WebRTC offer.
-*   **WS `/ws/data`**: Sends `in_count` and `out_count`.
+### 4. Configuration
+Create a `.env` file in the root directory:
+```env
+# Example .env configuration
+YOLO_MODEL=models/yolov8n.pt
+MAX_PEOPLE_THRESHOLD=10
+FIREBASE_CREDENTIALS=firebase_creds.json
+```
 
-#### `app/notifier.py`
-Utility script using `firebase-admin` to trigger push notifications when thresholds are met.
+### 5. Download YOLO Models
+Ensure you have a YOLO model file (e.g., `yolov8n.pt`) in the `models/` directory.
 
-## 📋 5. Development Roadmap
+### 6. Run the Application
+```bash
+# Development mode
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
-### **Phase 1: The AI Core**
-*   Set up Python environment with `ultralytics` and `opencv-python`.
-*   Implement `ObjectCounter` logic.
-*   Fine-tune "Virtual Line" coordinates.
+# OR using Python module
+python -m app.main
+```
+Access the Web UI at `http://localhost:8000`.
 
-### **Phase 2: The Streaming Server**
-*   Build **FastAPI** server.
-*   Integrate `aiortc` for signaling.
-*   Create `VideoTransformTrack` to wrap YOLO logic.
+## 📡 API & Socket Documentation
 
-### **Phase 3: Real-time UI & Alerts**
-*   Add **WebSocket** endpoint for broadcasting counts.
-*   Create HTML/JS dashboard.
-*   Initialize `firebase-admin` for notifications.
+### WebSocket Events
+The application maintains a persistent WebSocket connection at `/ws/data`.
 
-## 💡 Key Design Decisions
+*   **Server -> Client (Updates)**:
+    Received periodically when counts change.
+    ```json
+    {
+      "in_count": 12,
+      "out_count": 8
+    }
+    ```
 
-*   **Model Choice:** **YOLOv8n** (Nano) for fast CPU-based prototyping.
-*   **Concurrency:** Python's `asyncio` to keep the server responsive during heavy processing.
-*   **Tracking:** Use `persist=True` in model calls to maintain IDs across frames.
+### REST API Endpoints
 
-> **Note:** For WebSockets, ensure a global variable or "Manager" class is used to share count values between the AI thread and the WebSocket thread.
+*   **`POST /offer`**:
+    Initiates the WebRTC handshake.
+    *   **Body**: `{"sdp": "...", "type": "offer", "model": "yolov8n.pt"}`
+    *   **Response**: `{"sdp": "...", "type": "answer"}`
+
+*   **`POST /reset_counter`**:
+    Resets the in/out counters to 0.
+    *   **Response**: `{"message": "Counters reset", "tracks_updated": 1}`
+
+*   **`GET /models`**:
+    Lists available YOLO models stored in the `models/` directory.
+    *   **Response**: `{"models": ["yolov8n.pt", "yolov8m.pt"], "current": "..."}`
+
+*   **`POST /subscribe`**:
+    Subscribes an FCM token to push notifications.
+    *   **Body**: `{"token": "fcm_token_string"}`
+
+## 🖼 Demo
+
+![Demo GIF Placeholder](docs/demo.gif)
+*(Placeholder: Add a GIF demonstrating the real-time detection and counting process)*
+
+## 🤝 Contributing
+1.  Fork the repository.
+2.  Create a feature branch (`git checkout -b feature/NewFeature`).
+3.  Commit your changes (`git commit -m 'Add some NewFeature'`).
+4.  Push to the branch (`git push origin feature/NewFeature`).
+5.  Open a Pull Request.
+
+## 📄 License
+[MIT License](LICENSE)
