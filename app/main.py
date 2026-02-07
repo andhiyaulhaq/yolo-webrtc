@@ -100,10 +100,36 @@ async def on_shutdown():
     await asyncio.gather(*coros)
     pcs.clear()
 
+@app.get("/models")
+async def get_models():
+    """
+    Returns a list of available YOLO models in the 'models/' directory.
+    """
+    models_dir = "models"
+    if not os.path.exists(models_dir):
+        return []
+    
+    # List .pt files
+    models = [f for f in os.listdir(models_dir) if f.endswith(".pt")]
+    
+    # Return full paths or just filenames? 
+    # Frontend can display filenames, we reconstruct path here or send full path.
+    # Let's send filenames.
+    return {"models": models, "current": os.getenv("YOLO_MODEL", "models/yolov8n.pt")}
+
 @app.post("/offer")
 async def offer(request: Request):
     params = await request.json()
     offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
+    
+    # Get selected model from params, default to env var or hardcoded default
+    selected_model = params.get("model")
+    if selected_model:
+        # Sanitize potentially (prevent directory traversal)
+        selected_model = os.path.basename(selected_model) 
+        model_path = os.path.join("models", selected_model)
+    else:
+        model_path = os.getenv("YOLO_MODEL", "models/yolov8n.pt")
 
     pc = RTCPeerConnection()
     pc_id = "PeerConnection(%s)" % uuid.uuid4()
@@ -141,7 +167,7 @@ async def offer(request: Request):
                 except Exception as e:
                     logger.error(f"Error triggering alert: {e}")
 
-            local_video = VideoTransformTrack(track, update_callback=broadcast_counts)
+            local_video = VideoTransformTrack(track, update_callback=broadcast_counts, model_path=model_path)
             pc.addTrack(local_video)
         
         @track.on("ended")

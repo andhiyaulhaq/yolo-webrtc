@@ -11,10 +11,14 @@ class VideoTransformTrack(MediaStreamTrack):
     """
     kind = "video"
 
-    def __init__(self, track, update_callback=None):
+    def __init__(self, track, update_callback=None, model_path=None):
         super().__init__()
         self.track = track
-        self.counter = ObjectCounter()
+        # Use provided model_path or let ObjectCounter decide (which defaults to env var)
+        if model_path:
+             self.counter = ObjectCounter(model_path=model_path)
+        else:
+             self.counter = ObjectCounter()
         self.update_callback = update_callback
         
         # Executor for running inference in a separate thread

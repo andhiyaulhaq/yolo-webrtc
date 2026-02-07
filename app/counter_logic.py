@@ -105,7 +105,7 @@ class KalmanBoxTracker:
         return [x, y, x + w, y + h]
 
 class ObjectCounter:
-    def __init__(self, model_path='models/yolov8n.pt', region=None):
+    def __init__(self, model_path=None, region=None):
         """
         Initialize the ObjectCounter with a YOLO model and a counting region.
         
@@ -115,6 +115,10 @@ class ObjectCounter:
                            If None, defaults to a horizontal line in the middle of the frame.
         """
         # Load the YOLO model
+        import os
+        if model_path is None:
+            model_path = os.getenv('YOLO_MODEL', 'models/yolov8n.pt')
+        
         self.model = YOLO(model_path)
         
         # Region (Line) definition: [start_point, end_point]

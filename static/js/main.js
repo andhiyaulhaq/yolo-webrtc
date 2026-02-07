@@ -189,7 +189,8 @@ async function startStream() {
             method: 'POST',
             body: JSON.stringify({
                 sdp: localDesc.sdp,
-                type: localDesc.type
+                type: localDesc.type,
+                model: document.getElementById('modelSelect').value
             }),
             headers: {
                 'Content-Type': 'application/json'
@@ -344,3 +345,6 @@ function showToast(title, body) {
 
     container.appendChild(toast);
 }
+
+// Fetch available models
+

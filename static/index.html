@@ -82,7 +82,11 @@
                     </div>
                     <div class="info-row">
                         <span>Model</span>
-                        <span class="info-val">YOLOv8n</span>
+                        <select id="modelSelect" class="info-val"
+                            style="background: transparent; color: white; border: none; font-family: inherit; font-size: inherit; text-align: right; cursor: pointer;">
+                            <option value="yolov8n.pt">yolov8n.pt</option>
+                            <option value="yolov8s.pt">yolov8s.pt</option>
+                        </select>
                     </div>
                     <div class="info-row" style="margin-top: 20px; justify-content: center;">
                         <button id="enableNotifications" class="secondary-btn">Enable Alerts</button>
