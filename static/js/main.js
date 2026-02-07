@@ -449,7 +449,19 @@ try {
 
 function showToast(title, body) {
     const container = document.getElementById('toast-container');
+
+    // Ensure maximum 2 toasts visible
+    while (container.children.length >= 2) {
+        container.removeChild(container.firstChild);
+    }
+
+    // Dim existing toasts (new toast will be the only active one)
+    Array.from(container.children).forEach(child => {
+        child.classList.add('toast-dimmed');
+    });
+
     const toast = document.createElement('div');
+    toast.className = 'toast';
     toast.innerHTML = `
         <div class="toast-header">
             <span class="toast-title">
