@@ -60,6 +60,9 @@ pip install -r requirements.txt
 ```
 
 ### 4. Configuration
+### 4. Configuration
+
+#### Environment Variables
 Create a `.env` file in the root directory:
 ```env
 # Example .env configuration
@@ -67,6 +70,33 @@ YOLO_MODEL=models/yolov8n.pt
 MAX_PEOPLE_THRESHOLD=10
 FIREBASE_CREDENTIALS=firebase_creds.json
 ```
+
+#### Firebase Setup (Manual Step)
+To enable push notifications, you must manually provide Firebase credentials.
+
+**Backend (Service Account):**
+1.  Go to the Firebase Console -> Project Settings -> Service accounts.
+2.  Generate a new private key.
+3.  Save the JSON file as `firebase_creds.json` in the root directory (or update `FIREBASE_CREDENTIALS` in `.env` to point to it).
+
+**Frontend (Client Config):**
+1.  Go to the Firebase Console -> Project Settings -> General -> Your apps.
+2.  Copy the `firebaseConfig` object.
+3.  Go to Project Settings -> Cloud Messaging -> Web configuration to generate a **key pair** (VAPID Key).
+4.  Create or update `static/js/config.js` with your specific details:
+    ```javascript
+    const firebaseConfig = {
+        apiKey: "YOUR_API_KEY",
+        authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+        projectId: "YOUR_PROJECT_ID",
+        storageBucket: "YOUR_PROJECT_ID.appspot.com",
+        messagingSenderId: "YOUR_SENDER_ID",
+        appId: "YOUR_APP_ID",
+        measurementId: "YOUR_MEASUREMENT_ID"
+    };
+
+    const vapidKey = 'YOUR_PUBLIC_VAPID_KEY';
+    ```
 
 ### 5. Download YOLO Models
 Ensure you have a YOLO model file (e.g., `yolov8n.pt`) in the `models/` directory.
