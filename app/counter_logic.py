@@ -176,9 +176,9 @@ class ObjectCounter:
         cross_p1 = line_vec[0] * (p1[1] - line_start[1]) - line_vec[1] * (p1[0] - line_start[0])
         
         if cross_p1 < 0:
-            return 'out'
-        else:
             return 'in'
+        else:
+            return 'out'
 
     def predict(self, frame):
         """
