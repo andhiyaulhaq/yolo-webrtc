@@ -100,8 +100,8 @@ async function startStream() {
         // Get Local Stream (Camera)
         const localStream = await navigator.mediaDevices.getUserMedia({
             video: {
-                width: { ideal: 1280 },
-                height: { ideal: 720 },
+                width: { ideal: 640 },
+                height: { ideal: 480 },
                 facingMode: 'environment' // Use back camera on mobile if available
             },
             audio: false

@@ -1,6 +1,10 @@
 import cv2
 import numpy as np
+import torch
 from ultralytics import YOLO
+
+# Limit CPU usage to prevent video lag
+torch.set_num_threads(2)
 from collections import deque
 import time
 
