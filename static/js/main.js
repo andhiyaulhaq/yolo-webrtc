@@ -65,6 +65,8 @@ function connectWebSocket() {
     };
 }
 
+let lastValidResolution = 'vga';
+
 // WebRTC Negotiation
 async function startStream() {
     updateStatus('connecting');
@@ -75,10 +77,12 @@ async function startStream() {
         pc.close();
     }
 
+    // ... (rest of function setup)
     pc = new RTCPeerConnection(config);
 
     // Handle incoming track (Annotated Video from Server)
     pc.ontrack = (evt) => {
+        // ... (same as before)
         console.log('Track received:', evt.track.kind);
         if (evt.track.kind === 'video') {
             remoteVideo.srcObject = evt.streams[0];
@@ -96,16 +100,63 @@ async function startStream() {
         }
     };
 
+    const resSelect = document.getElementById('resSelect');
+    const resValue = resSelect ? resSelect.value : 'vga';
+
     try {
-        // Get Local Stream (Camera)
-        const localStream = await navigator.mediaDevices.getUserMedia({
+        // Create specific constraints based on resolution choice
+        let constraints = {
             video: {
-                width: { ideal: 640 },
-                height: { ideal: 480 },
-                facingMode: 'environment' // Use back camera on mobile if available
+                facingMode: 'environment'
             },
             audio: false
-        });
+        };
+
+        if (resValue === 'qvga') {
+            constraints.video.width = { ideal: 320, max: 320 };
+            constraints.video.height = { ideal: 240, max: 240 };
+        } else if (resValue === 'vga') {
+            constraints.video.width = { ideal: 640, min: 640 };
+            constraints.video.height = { ideal: 480, min: 480 };
+        } else if (resValue === 'hd') {
+            constraints.video.width = { ideal: 1280, min: 1280 };
+            constraints.video.height = { ideal: 720, min: 720 };
+        } else if (resValue === 'fhd') {
+            constraints.video.width = { ideal: 1920, min: 1920 };
+            constraints.video.height = { ideal: 1080, min: 1080 };
+        }
+
+        // Get Local Stream (Camera)
+        let localStream;
+        try {
+            localStream = await navigator.mediaDevices.getUserMedia(constraints);
+            // If successful, update our last known good resolution
+            lastValidResolution = resValue;
+        } catch (err) {
+            console.warn("Resolution not supported:", resValue, err);
+
+            // Revert UI
+            if (resSelect) resSelect.value = lastValidResolution;
+
+            showToast('Resolution Unsupported', `Your camera does not support ${resValue.toUpperCase()}. Reverting to ${lastValidResolution.toUpperCase()}.`, 5000);
+
+            // Fallback attempt (recursive? or just retry with old constraints logic here)
+            // Simpler: Just recursively call startStream() effectively retrying with the reverted value
+            // But verify we don't loop infinitely. Check if we already reverted.
+            if (resValue !== lastValidResolution) {
+                console.log("Retrying with fallback resolution...");
+                startButton.disabled = false; // reset state for next attempt
+                return startStream();
+            } else {
+                throw err; // If even the fallback fails, escalate
+            }
+        }
+
+        const track = localStream.getVideoTracks()[0];
+        const settings = track.getSettings();
+        console.log(`Requested constraints:`, JSON.stringify(constraints));
+        console.log(`Actual resolution: ${settings.width}x${settings.height}`);
+        updateStatus(`Camera: ${settings.width}x${settings.height}`);
 
         // Add local track to PC
         // This triggers 'on_track' on the server side
@@ -208,6 +259,14 @@ async function startStream() {
         console.error('Failed to start stream:', e);
         updateStatus('disconnected');
         startButton.disabled = false;
+        startButton.innerHTML = `
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                stroke-linejoin="round">
+                <polygon points="5 3 19 12 5 21 5 3"></polygon>
+            </svg>
+            Start Analysis
+        `;
         alert('Could not start stream. ' + e.message);
     }
 }
@@ -236,7 +295,27 @@ setInterval(() => {
 
 
 // Initialize
-startButton.addEventListener('click', startStream);
+startButton.addEventListener('click', () => {
+    // Show loading state
+    startButton.innerHTML = `<span class="spinner"></span> Connecting...`;
+    startButton.disabled = true;
+    startStream();
+});
+
+// Auto-restart stream on settings change
+const settingsElements = [document.getElementById('modelSelect'), document.getElementById('resSelect')];
+settingsElements.forEach(el => {
+    if (el) {
+        el.addEventListener('change', () => {
+            // Only restart if the stream is already running (connected or checking)
+            if (pc && (pc.connectionState === 'connected' || pc.connectionState === 'checking')) {
+                console.log('Settings changed, restarting stream...');
+                showToast('Updating Stream', 'Applying new settings...', 3000);
+                startStream();
+            }
+        });
+    }
+});
 connectWebSocket();
 
 // --- Firebase Cloud Messaging (Web Push) ---
