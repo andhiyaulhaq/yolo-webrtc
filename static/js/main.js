@@ -319,10 +319,32 @@ settingsElements.forEach(el => {
 connectWebSocket();
 
 // --- Firebase Cloud Messaging (Web Push) ---
-const enableNotificationsBtn = document.getElementById('enableNotifications');
+const notificationToggle = document.getElementById('notificationToggle');
+let currentFCMToken = null;
 
-// TODO: Paste your Firebase config object here EXACTLY as in firebase-messaging-sw.js
-// Config is now loaded from js/config.js
+// Helper to send Unsubscribe request
+function sendUnsubscribeToServer(token) {
+    fetch('/unsubscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: token })
+    })
+        .then(response => response.json())
+        .then(data => console.log('Server unsubscription response:', data))
+        .catch((error) => console.error('Error unsubscribing:', error));
+}
+
+// Helper to send Subscribe request
+function sendTokenToServer(token) {
+    fetch('/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: token })
+    })
+        .then(response => response.json())
+        .then(data => console.log('Server subscription response:', data))
+        .catch((error) => console.error('Error subscribing to topic:', error));
+}
 
 try {
     console.log("Initializing Firebase...");
@@ -337,67 +359,97 @@ try {
         showToast(title, body);
     });
 
-    enableNotificationsBtn.addEventListener('click', () => {
-        console.log("Button clicked. Requesting permission...");
-        Notification.requestPermission().then((permission) => {
-            if (permission === 'granted') {
-                console.log('Notification permission granted.');
-
-                // Register Service Worker explicitly
-                navigator.serviceWorker.register('./firebase-messaging-sw.js')
-                    .then((registration) => {
-                        console.log('Service Worker registered with scope:', registration.scope);
-
-                        // Get Token with registration
-                        return messaging.getToken({
-                            vapidKey: vapidKey,
-                            serviceWorkerRegistration: registration
-                        });
-                    })
-                    .then((currentToken) => {
-                        if (currentToken) {
-                            console.log('FCM Token:', currentToken);
-                            sendTokenToServer(currentToken);
-                            enableNotificationsBtn.textContent = "Notifications Enabled";
-                            enableNotificationsBtn.disabled = true;
-                        } else {
-                            console.log('No registration token available. Request permission to generate one.');
+    // Initialize Toggle State if already granted
+    if (Notification.permission === 'granted') {
+        // Retrieve token to check if we are active
+        // We can't easily know if subscribed to topic on server without asking,
+        // but we can assume if we have a token, we should be toggled ON or at least ready.
+        // For now, let's just leave it unchecked until user interacts, OR check valid token.
+        // To be seamless, let's try to get token silently.
+        navigator.serviceWorker.getRegistration('./firebase-messaging-sw.js').then(reg => {
+            if (reg) {
+                messaging.getToken({ vapidKey: vapidKey, serviceWorkerRegistration: reg })
+                    .then((token) => {
+                        if (token) {
+                            currentFCMToken = token;
+                            // We don't auto-toggle ON to avoid confusion, or we could?
+                            // Let's leave it manual for now to be safe.
                         }
-                    }).catch((err) => {
-                        console.log('An error occurred while retrieving token. ', err);
-                    });
-
-            } else {
-                console.log('Unable to get permission to notify.');
-                alert("Permission denied. We cannot send you alerts.");
+                    }).catch(() => { });
             }
         });
+    }
+
+    notificationToggle.addEventListener('change', () => {
+        if (notificationToggle.checked) {
+            // ENABLE ALERTS
+            console.log("Toggle ON. Requesting permission...");
+            Notification.requestPermission().then((permission) => {
+                if (permission === 'granted') {
+                    console.log('Notification permission granted.');
+
+                    navigator.serviceWorker.register('./firebase-messaging-sw.js')
+                        .then((registration) => {
+                            return messaging.getToken({
+                                vapidKey: vapidKey,
+                                serviceWorkerRegistration: registration
+                            });
+                        })
+                        .then((token) => {
+                            if (token) {
+                                currentFCMToken = token;
+                                sendTokenToServer(token);
+                                showToast('Notifications Enabled', 'You will now receive alerts.');
+                            } else {
+                                console.warn('No registration token available.');
+                                showToast('Error', 'No token available.', 3000);
+                                notificationToggle.checked = false; // Revert
+                            }
+                        })
+                        .catch((err) => {
+                            console.error('Token error:', err);
+                            showToast('Error', `Failed to enable: ${err.message}`, 4000);
+                            notificationToggle.checked = false; // Revert
+                        });
+                } else {
+                    console.warn('Permission denied.');
+                    showToast('Permission Denied', 'Please allow notifications.', 4000);
+                    notificationToggle.checked = false; // Revert
+                }
+            }).catch(err => {
+                console.error('Permission request failed:', err);
+                showToast('Error', `Request failed: ${err.message}`, 4000);
+                notificationToggle.checked = false; // Revert
+            });
+
+        } else {
+            // DISABLE ALERTS
+            console.log("Toggle OFF. Unsubscribing...");
+            if (currentFCMToken) {
+                sendUnsubscribeToServer(currentFCMToken);
+                messaging.deleteToken(currentFCMToken).then(() => {
+                    console.log('Token deleted.');
+                    currentFCMToken = null;
+                }).catch((err) => console.error('Error deleting token:', err));
+
+                showToast('Notifications Disabled', 'Alerts turned off.');
+            } else {
+                // Try to get token to unsubscribe if we don't have it in memory? 
+                // If we don't have it, we probably aren't subscribed.
+                showToast('Notifications Disabled', 'Alerts turned off.');
+            }
+        }
     });
 
 } catch (e) {
-    console.warn("Firebase not initialized in main.js (Missing config?)", e);
-    // Hide button if config missing
-    // enableNotificationsBtn.style.display = 'none'; 
-}
-
-function sendTokenToServer(token) {
-    fetch('/subscribe', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ token: token })
-    })
-        .then(response => response.json())
-        .then(data => console.log('Server subscription response:', data))
-        .catch((error) => console.error('Error subscribing to topic:', error));
+    console.warn("Firebase init error:", e);
+    // Disable toggle if firebase fails
+    if (notificationToggle) notificationToggle.disabled = true;
 }
 
 function showToast(title, body) {
     const container = document.getElementById('toast-container');
     const toast = document.createElement('div');
-    toast.className = 'toast';
-
     toast.innerHTML = `
         <div class="toast-header">
             <span class="toast-title">

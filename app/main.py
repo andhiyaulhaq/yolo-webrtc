@@ -93,6 +93,26 @@ async def subscribe_to_topic(request: TokenRequest):
         logger.error(f"Error subscribing to topic: {e}")
         return {"message": f"Error: {str(e)}", "count": 0}
 
+@app.post("/unsubscribe")
+async def unsubscribe_from_topic(request: TokenRequest):
+    """
+    Unsubscribes a client FCM token from the 'alerts' topic.
+    """
+    topic = "alerts"
+    tokens = [request.token]
+    
+    if notifier.mock_mode:
+        logger.info(f"MOCK UNSUBSCRIPTION: Removed {request.token[:10]}... from topic '{topic}'")
+        return {"message": "Success (Mock)", "count": 1}
+
+    try:
+        response = messaging.unsubscribe_from_topic(tokens, topic)
+        logger.info(f"Successfully unsubscribed from topic: {response.success_count} success, {response.failure_count} failure")
+        return {"message": "Success", "count": response.success_count}
+    except Exception as e:
+        logger.error(f"Error unsubscribing from topic: {e}")
+        return {"message": f"Error: {str(e)}", "count": 0}
+
 @app.on_event("shutdown")
 async def on_shutdown():
     # Close all peer connections on shutdown
