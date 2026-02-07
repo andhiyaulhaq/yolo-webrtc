@@ -110,3 +110,4 @@ firebase_creds.json
 
 
 /static/js/config.js
+*.sqlite

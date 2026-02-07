@@ -7,6 +7,7 @@ from ultralytics import YOLO
 torch.set_num_threads(2)
 from collections import deque
 import time
+from app.database import log_crossing, log_alert
 
 class KalmanBoxTracker:
     """
@@ -310,8 +311,10 @@ class ObjectCounter:
                         direction = self._get_direction((prev_cx, prev_cy), (curr_cx, curr_cy), line_start, line_end)
                         if direction == 'in':
                             self.in_count += 1
+                            log_crossing('in', track_id) # Log to DB
                         else:
                             self.out_count += 1
+                            log_crossing('out', track_id) # Log to DB
                         # Update cooldown timer
                         tracker.last_counted_time = current_time
 

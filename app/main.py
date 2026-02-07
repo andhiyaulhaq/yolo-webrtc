@@ -2,6 +2,7 @@ import logging
 import uuid
 import asyncio
 import os
+import time
 import uvicorn
 from dotenv import load_dotenv
 from app.notifier import Notifier
@@ -24,6 +25,10 @@ logger = logging.getLogger(__name__)
 
 # Initialize Notifier
 notifier = Notifier()
+
+# Initialize Database
+from app.database import init_db
+init_db()
 
 app = FastAPI()
 
@@ -170,6 +175,9 @@ async def offer(request: Request):
     def on_track(track):
         logger.info(f"Track {track.kind} received")
         if track.kind == "video":
+            # State for alert cooldown (mutable to be accessible in callback)
+            alert_state = {"last_alert_time": 0}
+            
             # Callback to broadcast counts
             def broadcast_counts(in_count, out_count):
                 import json
@@ -179,11 +187,27 @@ async def offer(request: Request):
 
                 # Check for alerts
                 try:
+                    from app.database import log_alert
+                    
                     threshold = int(os.getenv("MAX_PEOPLE_THRESHOLD", 10))
+                    
+                    # Alert Logic:
+                    # 1. Count must exceed threshold
+                    # 2. Cooldown of 60 seconds must have passed since last alert
                     if in_count > threshold:
-                        # Run blocking FCM call in executor
-                        loop = asyncio.get_event_loop()
-                        loop.run_in_executor(None, notifier.send_alert, in_count, threshold)
+                        current_time = time.time()
+                        if (current_time - alert_state["last_alert_time"]) > 60:
+                            # Log alert to DB
+                            asyncio.get_event_loop().run_in_executor(None, log_alert, in_count, threshold)
+                            
+                            # Run blocking FCM call in executor
+                            loop = asyncio.get_event_loop()
+                            loop.run_in_executor(None, notifier.send_alert, in_count, threshold)
+                            
+                            # Update last alert time
+                            alert_state["last_alert_time"] = current_time
+                            logger.info(f"Alert triggered! Count: {in_count}, Threshold: {threshold}")
+                            
                 except Exception as e:
                     logger.error(f"Error triggering alert: {e}")
 
