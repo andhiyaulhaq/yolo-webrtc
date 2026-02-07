@@ -280,6 +280,10 @@ class ObjectCounter:
             # --- COUNTING LOGIC (Using Predicted Centroids) ---
             cx, cy = self._calculate_centroid(x1, y1, x2, y2)
             
+            # Hide if centroid is out of frame to prevent ghosting
+            if cx < 0 or cx >= width or cy < 0 or cy >= height:
+                continue
+            
             # Track Trail
             if track_id not in self.trail_history:
                 self.trail_history[track_id] = []

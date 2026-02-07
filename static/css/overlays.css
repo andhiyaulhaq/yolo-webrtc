@@ -1,0 +1,29 @@
+/* Video Overlays */
+.video-overlay {
+    position: absolute;
+    top: 1rem;
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    font-weight: 700;
+    font-size: 0.9rem;
+    z-index: 5;
+    pointer-events: none;
+    backdrop-filter: blur(4px);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.overlay-in {
+    left: 1rem;
+    background: rgba(16, 185, 129, 0.3);
+    /* Darker green for visibility on bright backgrounds */
+    color: #047857;
+    border: 1px solid rgba(16, 185, 129, 0.4);
+}
+
+.overlay-out {
+    right: 1rem;
+    background: rgba(239, 68, 68, 0.3);
+    /* Darker red for visibility on bright backgrounds */
+    color: #b91c1c;
+    border: 1px solid rgba(239, 68, 68, 0.4);
+}
