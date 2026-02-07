@@ -142,6 +142,25 @@ async def get_models():
     # Let's send filenames.
     return {"models": models, "current": os.getenv("YOLO_MODEL", "models/yolov8n.pt")}
 
+@app.post("/reset_counter")
+async def reset_counter():
+    """
+    Resets the in/out counters for all active video tracks.
+    """
+    count = 0
+    for pc in pcs:
+        for sender in pc.getSenders():
+            if sender.track and isinstance(sender.track, VideoTransformTrack):
+                sender.track.counter.in_count = 0
+                sender.track.counter.out_count = 0
+                count += 1
+                logger.info(f"Reset counter for a track")
+    
+    # Broadcast reset to all clients immediately so UI updates
+    await manager.broadcast('{"in_count": 0, "out_count": 0}')
+    
+    return {"message": "Counters reset", "tracks_updated": count}
+
 @app.post("/offer")
 async def offer(request: Request):
     params = await request.json()

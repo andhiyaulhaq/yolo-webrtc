@@ -35,6 +35,25 @@ function updateStatus(state) {
     }
 }
 
+// Helper to update reset button state
+function updateResetButtonState() {
+    const inCount = parseInt(inCountDisplay.textContent || '0', 10);
+    const outCount = parseInt(outCountDisplay.textContent || '0', 10);
+    const resetBtn = document.getElementById('resetCounterBtn');
+
+    if (resetBtn) {
+        if (inCount === 0 && outCount === 0) {
+            resetBtn.disabled = true;
+            resetBtn.style.opacity = '0.5';
+            resetBtn.style.cursor = 'not-allowed';
+        } else {
+            resetBtn.disabled = false;
+            resetBtn.style.opacity = '1';
+            resetBtn.style.cursor = 'pointer';
+        }
+    }
+}
+
 // WebSocket Connection
 function connectWebSocket() {
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -53,6 +72,7 @@ function connectWebSocket() {
                 // Animate numbers? Simple text update for now
                 inCountDisplay.textContent = data.in_count;
                 outCountDisplay.textContent = data.out_count;
+                updateResetButtonState();
             }
         } catch (e) {
             console.error('Error parsing WS message:', e);
@@ -64,6 +84,9 @@ function connectWebSocket() {
         setTimeout(connectWebSocket, 3000);
     };
 }
+
+// Initial check
+document.addEventListener('DOMContentLoaded', updateResetButtonState);
 
 let lastValidResolution = 'vga';
 
@@ -301,6 +324,43 @@ startButton.addEventListener('click', () => {
     startButton.disabled = true;
     startStream();
 });
+
+// Reset Counter
+const resetCounterBtn = document.getElementById('resetCounterBtn');
+if (resetCounterBtn) {
+    resetCounterBtn.addEventListener('click', async () => {
+        if (!confirm('Are you sure you want to reset the counters?')) return;
+
+        try {
+            // Add spinning effect or disable button
+            const originalText = resetCounterBtn.innerHTML;
+            resetCounterBtn.disabled = true;
+            resetCounterBtn.innerHTML = 'Resetting...';
+
+            const response = await fetch('/reset_counter', {
+                method: 'POST'
+            });
+
+            if (response.ok) {
+                showToast('Counters Reset', 'In/Out counts have been reset to 0.');
+            } else {
+                showToast('Error', 'Failed to reset counters.');
+            }
+
+            // Revert button
+            resetCounterBtn.disabled = false;
+            resetCounterBtn.innerHTML = originalText;
+            updateResetButtonState();
+
+        } catch (error) {
+            console.error('Error resetting counters:', error);
+            showToast('Error', 'Failed to connect to server.');
+            resetCounterBtn.disabled = false;
+            resetCounterBtn.innerHTML = 'Reset Counter';
+            updateResetButtonState();
+        }
+    });
+}
 
 // Auto-restart stream on settings change
 const settingsElements = [document.getElementById('modelSelect'), document.getElementById('resSelect')];
