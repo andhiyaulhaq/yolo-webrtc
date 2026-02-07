@@ -64,6 +64,9 @@ class KalmanBoxTracker:
         
         # Keep track of last predicted box for smooth rendering
         self.pred_box = bbox
+        
+        # Cooldown for counting
+        self.last_counted_time = 0
 
     def update(self, bbox):
         """
@@ -131,7 +134,7 @@ class ObjectCounter:
         # Tracking data
         # self.track_history = {} # OLD: id -> list of recent centroids
         self.tracks = {} # id -> KalmanBoxTracker
-        self.counted_ids = set()
+        # self.counted_ids = set() # Removed in favor of timed cooldown logic
         
         # Counts
         self.in_count = 0
@@ -296,14 +299,21 @@ class ObjectCounter:
                 prev_cx, prev_cy = self.trail_history[track_id][-2]
                 curr_cx, curr_cy = (cx, cy)
                 
-                if track_id not in self.counted_ids:
+                if track_id not in self.tracks:
+                     continue
+                tracker = self.tracks[track_id]
+                
+                # Cooldown check (prevent jitter double counting)
+                current_time = time.time()
+                if (current_time - tracker.last_counted_time) > 1.0:
                     if self._intersect((prev_cx, prev_cy), (curr_cx, curr_cy), line_start, line_end):
                         direction = self._get_direction((prev_cx, prev_cy), (curr_cx, curr_cy), line_start, line_end)
                         if direction == 'in':
                             self.in_count += 1
                         else:
                             self.out_count += 1
-                        self.counted_ids.add(track_id)
+                        # Update cooldown timer
+                        tracker.last_counted_time = current_time
 
             # --- DRAWING ---
             cv2.rectangle(annotated_frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 2)
