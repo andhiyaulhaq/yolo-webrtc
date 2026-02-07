@@ -104,3 +104,9 @@ dmypy.json
 
 # macOS
 .DS_Store
+
+# Firebase credentials
+firebase_creds.json
+
+
+/static/js/config.js

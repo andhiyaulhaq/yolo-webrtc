@@ -3,6 +3,12 @@ import uuid
 import asyncio
 import os
 import uvicorn
+from dotenv import load_dotenv
+from app.notifier import Notifier
+from app.schema import TokenRequest
+from firebase_admin import messaging
+
+load_dotenv()
 
 from fastapi import FastAPI, Request, WebSocket
 from fastapi.responses import HTMLResponse
@@ -15,6 +21,9 @@ from app.camera import VideoTransformTrack
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Initialize Notifier
+notifier = Notifier()
 
 app = FastAPI()
 
@@ -64,6 +73,26 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception:
         manager.disconnect(websocket)
 
+@app.post("/subscribe")
+async def subscribe_to_topic(request: TokenRequest):
+    """
+    Subscribes a client FCM token to the 'alerts' topic.
+    """
+    topic = "alerts"
+    tokens = [request.token]
+    
+    if notifier.mock_mode:
+        logger.info(f"MOCK SUBSCRIPTION: Added {request.token[:10]}... to topic '{topic}'")
+        return {"message": "Success (Mock)", "count": 1}
+
+    try:
+        response = messaging.subscribe_to_topic(tokens, topic)
+        logger.info(f"Successfully subscribed to topic: {response.success_count} success, {response.failure_count} failure")
+        return {"message": "Success", "count": response.success_count}
+    except Exception as e:
+        logger.error(f"Error subscribing to topic: {e}")
+        return {"message": f"Error: {str(e)}", "count": 0}
+
 @app.on_event("shutdown")
 async def on_shutdown():
     # Close all peer connections on shutdown
@@ -101,6 +130,16 @@ async def offer(request: Request):
                 data = json.dumps({"in_count": in_count, "out_count": out_count})
                 # Schedule broadcast on the event loop
                 asyncio.create_task(manager.broadcast(data))
+
+                # Check for alerts
+                try:
+                    threshold = int(os.getenv("MAX_PEOPLE_THRESHOLD", 10))
+                    if in_count > threshold:
+                        # Run blocking FCM call in executor
+                        loop = asyncio.get_event_loop()
+                        loop.run_in_executor(None, notifier.send_alert, in_count, threshold)
+                except Exception as e:
+                    logger.error(f"Error triggering alert: {e}")
 
             local_video = VideoTransformTrack(track, update_callback=broadcast_counts)
             pc.addTrack(local_video)

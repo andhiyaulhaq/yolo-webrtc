@@ -84,11 +84,20 @@
                         <span>Model</span>
                         <span class="info-val">YOLOv8n</span>
                     </div>
+                    <div class="info-row" style="margin-top: 20px; justify-content: center;">
+                        <button id="enableNotifications" class="secondary-btn">Enable Alerts</button>
+                    </div>
                 </div>
             </section>
         </main>
     </div>
-    <script src="js/main.js"></script>
+    <div id="toast-container" class="toast-container"></div>
+
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-messaging-compat.js"></script>
+    <script src="js/config.js"></script>
+    <script src="js/main.js?v=debug1"></script>
 </body>
 
 </html>

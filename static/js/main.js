@@ -237,3 +237,110 @@ setInterval(() => {
 // Initialize
 startButton.addEventListener('click', startStream);
 connectWebSocket();
+
+// --- Firebase Cloud Messaging (Web Push) ---
+const enableNotificationsBtn = document.getElementById('enableNotifications');
+
+// TODO: Paste your Firebase config object here EXACTLY as in firebase-messaging-sw.js
+// Config is now loaded from js/config.js
+
+try {
+    console.log("Initializing Firebase...");
+    firebase.initializeApp(firebaseConfig);
+    const messaging = firebase.messaging();
+    console.log("Firebase initialized.");
+
+    // Handle foreground messages
+    messaging.onMessage((payload) => {
+        console.log('[main.js] Foreground message received ', payload);
+        const { title, body } = payload.notification;
+        showToast(title, body);
+    });
+
+    enableNotificationsBtn.addEventListener('click', () => {
+        console.log("Button clicked. Requesting permission...");
+        Notification.requestPermission().then((permission) => {
+            if (permission === 'granted') {
+                console.log('Notification permission granted.');
+
+                // Register Service Worker explicitly
+                navigator.serviceWorker.register('./firebase-messaging-sw.js')
+                    .then((registration) => {
+                        console.log('Service Worker registered with scope:', registration.scope);
+
+                        // Get Token with registration
+                        return messaging.getToken({
+                            vapidKey: vapidKey,
+                            serviceWorkerRegistration: registration
+                        });
+                    })
+                    .then((currentToken) => {
+                        if (currentToken) {
+                            console.log('FCM Token:', currentToken);
+                            sendTokenToServer(currentToken);
+                            enableNotificationsBtn.textContent = "Notifications Enabled";
+                            enableNotificationsBtn.disabled = true;
+                        } else {
+                            console.log('No registration token available. Request permission to generate one.');
+                        }
+                    }).catch((err) => {
+                        console.log('An error occurred while retrieving token. ', err);
+                    });
+
+            } else {
+                console.log('Unable to get permission to notify.');
+                alert("Permission denied. We cannot send you alerts.");
+            }
+        });
+    });
+
+} catch (e) {
+    console.warn("Firebase not initialized in main.js (Missing config?)", e);
+    // Hide button if config missing
+    // enableNotificationsBtn.style.display = 'none'; 
+}
+
+function sendTokenToServer(token) {
+    fetch('/subscribe', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ token: token })
+    })
+        .then(response => response.json())
+        .then(data => console.log('Server subscription response:', data))
+        .catch((error) => console.error('Error subscribing to topic:', error));
+}
+
+function showToast(title, body) {
+    const container = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    toast.className = 'toast';
+
+    toast.innerHTML = `
+        <div class="toast-header">
+            <span class="toast-title">
+                ⚠️ ${title}
+            </span>
+            <span style="font-size: 0.8rem; opacity: 0.7;">Now</span>
+        </div>
+        <div class="toast-body">${body}</div>
+    `;
+
+    // Click to dismiss
+    toast.addEventListener('click', () => {
+        toast.classList.add('hiding');
+        toast.addEventListener('animationend', () => toast.remove());
+    });
+
+    // Auto dismiss after 5 seconds
+    setTimeout(() => {
+        if (toast.isConnected) {
+            toast.classList.add('hiding');
+            toast.addEventListener('animationend', () => toast.remove());
+        }
+    }, 5000);
+
+    container.appendChild(toast);
+}
